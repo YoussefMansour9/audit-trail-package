@@ -2,9 +2,7 @@
 
 declare(strict_types=1);
 
-namespace AuditTrail\Application\Exception;
-
-use AuditTrail\Domain\Exception\AuditTrailException;
+namespace AuditTrail\Domain\Exception;
 
 class InvalidStateTransitionException extends AuditTrailException
 {

@@ -8,47 +8,22 @@ use AuditTrail\Domain\Exception\InvalidActionException;
 
 final class AuditEntry
 {
-    /** @var array<string, mixed>|null */
-    private ?array $oldState;
-
-    /** @var array<string, mixed>|null */
-    private ?array $newState;
-
-    /** @var array<string, mixed>|null */
-    private ?array $metadata;
-
-    private string $id;
-    private string $aggregateType;
-    private string $aggregateId;
-    private Action $action;
-    private string $performedBy;
-    private \DateTimeImmutable $performedAt;
-
     /**
      * @param array<string, mixed>|null $oldState
      * @param array<string, mixed>|null $newState
      * @param array<string, mixed>|null $metadata
      */
     private function __construct(
-        string $id,
-        string $aggregateType,
-        string $aggregateId,
-        Action $action,
-        ?array $oldState,
-        ?array $newState,
-        string $performedBy,
-        \DateTimeImmutable $performedAt,
-        ?array $metadata,
+        private readonly string $id,
+        private readonly string $aggregateType,
+        private readonly string $aggregateId,
+        private readonly Action $action,
+        private readonly ?array $oldState,
+        private readonly ?array $newState,
+        private readonly string $performedBy,
+        private readonly \DateTimeImmutable $performedAt,
+        private readonly ?array $metadata,
     ) {
-        $this->id = $id;
-        $this->aggregateType = $aggregateType;
-        $this->aggregateId = $aggregateId;
-        $this->action = $action;
-        $this->oldState = $oldState;
-        $this->newState = $newState;
-        $this->performedBy = $performedBy;
-        $this->performedAt = $performedAt;
-        $this->metadata = $metadata;
     }
 
     /**
@@ -84,7 +59,8 @@ final class AuditEntry
     /**
      * Reconstruct an audit entry from stored data.
      *
-     * @param array<string, mixed> $data
+     * @param array{id: string, aggregate_type: string, aggregate_id: string, action: string, performed_by: string, performed_at: string, old_state?: array<string, mixed>|null, new_state?: array<string, mixed>|null, metadata?: array<string, mixed>|null} $data
+     *
      * @throws \InvalidArgumentException when required keys are missing
      */
     public static function fromArray(array $data): self
@@ -95,6 +71,15 @@ final class AuditEntry
             }
         }
 
+        try {
+            $performedAt = new \DateTimeImmutable($data['performed_at']);
+        } catch (\Exception $e) {
+            throw new \InvalidArgumentException(
+                sprintf('Invalid "performed_at" value: "%s"', $data['performed_at']),
+                previous: $e,
+            );
+        }
+
         return new self(
             $data['id'],
             $data['aggregate_type'],
@@ -103,9 +88,14 @@ final class AuditEntry
             $data['old_state'] ?? null,
             $data['new_state'] ?? null,
             $data['performed_by'],
-            new \DateTimeImmutable($data['performed_at']),
+            $performedAt,
             $data['metadata'] ?? null,
         );
+    }
+
+    public function equals(self $other): bool
+    {
+        return $this->id === $other->id;
     }
 
     public function id(): string

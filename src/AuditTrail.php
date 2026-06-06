@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace AuditTrail;
 
+use AuditTrail\Application\DTO\ChangeRequest;
 use AuditTrail\Application\Service\AuditService;
+use AuditTrail\Domain\Action;
 use AuditTrail\Domain\AuditEntry;
 use AuditTrail\Infrastructure\Persistence\PDOAuditRepository;
+use AuditTrail\Infrastructure\RandomBytesIdGenerator;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
@@ -25,7 +28,8 @@ final class AuditTrail
         ?LoggerInterface $logger = null,
     ): self {
         $repository = new PDOAuditRepository($pdo);
-        $service = new AuditService($repository, $logger ?? new NullLogger());
+        $idGenerator = new RandomBytesIdGenerator();
+        $service = new AuditService($repository, $logger ?? new NullLogger(), $idGenerator);
 
         return new self($service);
     }
@@ -56,15 +60,7 @@ final class AuditTrail
     }
 
     /**
-     * @param list<array{
-     *     0: string,
-     *     1: string,
-     *     2: string,
-     *     3: array<string, mixed>|null,
-     *     4: array<string, mixed>|null,
-     *     5: string,
-     *     6?: array<string, mixed>|null,
-     * }> $changes
+     * @param list<ChangeRequest> $changes
      *
      * @return list<AuditEntry>
      */
@@ -92,6 +88,14 @@ final class AuditTrail
     public function getEntriesByUser(string $userId): array
     {
         return $this->service->getEntriesByUser($userId);
+    }
+
+    /**
+     * @return list<AuditEntry>
+     */
+    public function getEntriesByAction(Action $action): array
+    {
+        return $this->service->getEntriesByAction($action);
     }
 
     /**

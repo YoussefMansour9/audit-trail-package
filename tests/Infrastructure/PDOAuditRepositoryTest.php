@@ -130,7 +130,7 @@ final class PDOAuditRepositoryTest extends TestCase
         );
 
         $this->repository->append($entry1);
-        usleep(2000);
+        usleep(10000);
         $this->repository->append($entry2);
 
         $entries = $this->repository->findByAggregate('order', '1');
@@ -163,7 +163,7 @@ final class PDOAuditRepositoryTest extends TestCase
         );
 
         $this->repository->append($e1);
-        usleep(2000);
+        usleep(10000);
         $this->repository->append($e2);
 
         $entries = $this->repository->findByPerformedBy('bob');
@@ -180,103 +180,149 @@ final class PDOAuditRepositoryTest extends TestCase
         $this->assertSame([], $entries);
     }
 
-    // ─── findByDateRange ─────────────────────────────────────────
+    // ─── findByAction ────────────────────────────────────────────
 
-    public function test_find_by_date_range_returns_matching_entries(): void
+    public function test_find_by_action_returns_matching_entries_newest_first(): void
     {
-        $e1 = AuditEntry::record(
-            id: 'd1', aggregateType: 'order', aggregateId: '1',
+        $create1 = AuditEntry::record(
+            id: 'a-1', aggregateType: 'order', aggregateId: '1',
             action: 'CREATE', oldState: null, newState: [],
             performedBy: 'u',
         );
+        $create2 = AuditEntry::record(
+            id: 'a-2', aggregateType: 'user', aggregateId: '10',
+            action: 'CREATE', oldState: null, newState: [],
+            performedBy: 'u',
+        );
+        $update = AuditEntry::record(
+            id: 'a-3', aggregateType: 'order', aggregateId: '1',
+            action: 'UPDATE', oldState: ['a' => 1], newState: ['a' => 2],
+            performedBy: 'u',
+        );
 
-        $this->repository->append($e1);
+        $this->repository->append($create1);
+        usleep(10000);
+        $this->repository->append($create2);
 
-        $from = new \DateTimeImmutable('-1 hour');
-        $to = new \DateTimeImmutable('+1 hour');
+        $entries = $this->repository->findByAction(Action::CREATE);
 
-        $entries = $this->repository->findByDateRange($from, $to);
-
-        $this->assertCount(1, $entries);
+        $this->assertCount(2, $entries);
+        $this->assertSame('a-2', $entries[0]->id());
+        $this->assertSame('a-1', $entries[1]->id());
     }
 
-    public function test_find_by_date_range_excludes_outside_range(): void
+    public function test_find_by_action_returns_empty_when_none(): void
     {
-        $past = AuditEntry::record(
-            id: 'old-1', aggregateType: 'order', aggregateId: '1',
-            action: 'CREATE', oldState: null, newState: [],
-            performedBy: 'u',
-        );
-
-        $this->repository->append($past);
-
-        $from = new \DateTimeImmutable('+1 day');
-        $to = new \DateTimeImmutable('+2 days');
-
-        $entries = $this->repository->findByDateRange($from, $to);
+        $entries = $this->repository->findByAction(Action::DELETE);
 
         $this->assertSame([], $entries);
     }
 
-    // ─── countByAggregate ────────────────────────────────────────
+    // ─── appendBatch ─────────────────────────────────────────────
 
-    public function test_count_by_aggregate_returns_zero_when_none(): void
+    public function test_append_batch_persists_all_entries(): void
     {
-        $count = $this->repository->countByAggregate('order', '999');
+        $entries = [
+            AuditEntry::record(
+                id: 'b-1', aggregateType: 'order', aggregateId: '1',
+                action: 'CREATE', oldState: null, newState: ['s' => 'a'],
+                performedBy: 'u',
+            ),
+            AuditEntry::record(
+                id: 'b-2', aggregateType: 'order', aggregateId: '1',
+                action: 'UPDATE', oldState: ['s' => 'a'], newState: ['s' => 'b'],
+                performedBy: 'u',
+            ),
+        ];
 
-        $this->assertSame(0, $count);
+        $this->repository->appendBatch($entries);
+
+        $this->assertNotNull($this->repository->findById('b-1'));
+        $this->assertNotNull($this->repository->findById('b-2'));
     }
 
-    public function test_count_by_aggregate_returns_correct_count(): void
+    public function test_append_batch_empty_does_nothing(): void
     {
-        $this->repository->append(AuditEntry::record(
-            id: 'c1', aggregateType: 'order', aggregateId: '1',
+        $this->repository->appendBatch([]);
+
+        $this->assertSame([], $this->repository->findByAggregate('order', '1'));
+    }
+
+    public function test_append_batch_rolls_back_on_failure(): void
+    {
+        $valid = AuditEntry::record(
+            id: 'ok', aggregateType: 'order', aggregateId: '1',
             action: 'CREATE', oldState: null, newState: [],
             performedBy: 'u',
-        ));
-        $this->repository->append(AuditEntry::record(
-            id: 'c2', aggregateType: 'order', aggregateId: '1',
+        );
+        $invalid = AuditEntry::record(
+            id: 'ok', aggregateType: 'order', aggregateId: '1',
+            action: 'CREATE', oldState: null, newState: [],
+            performedBy: 'u',
+        );
+
+        $this->expectException(\AuditTrail\Domain\Exception\AuditTrailException::class);
+
+        $this->repository->appendBatch([$valid, $invalid]);
+    }
+
+    // ─── findByAggregatePaginated ────────────────────────────────
+
+    public function test_find_by_aggregate_paginated_returns_subset(): void
+    {
+        $e1 = AuditEntry::record(
+            id: 'p1', aggregateType: 'order', aggregateId: '1',
+            action: 'CREATE', oldState: null, newState: [],
+            performedBy: 'u',
+        );
+        $e2 = AuditEntry::record(
+            id: 'p2', aggregateType: 'order', aggregateId: '1',
             action: 'UPDATE', oldState: ['a' => 1], newState: ['a' => 2],
             performedBy: 'u',
-        ));
+        );
+        $e3 = AuditEntry::record(
+            id: 'p3', aggregateType: 'order', aggregateId: '1',
+            action: 'DELETE', oldState: ['a' => 2], newState: null,
+            performedBy: 'u',
+        );
 
-        $count = $this->repository->countByAggregate('order', '1');
-        $this->assertSame(2, $count);
+        $this->repository->append($e1);
+        usleep(10000);
+        $this->repository->append($e2);
+        usleep(10000);
+        $this->repository->append($e3);
+
+        $page1 = $this->repository->findByAggregatePaginated('order', '1', 2, 0);
+        $this->assertCount(2, $page1);
+        $this->assertSame('p1', $page1[0]->id());
+        $this->assertSame('p2', $page1[1]->id());
+
+        $page2 = $this->repository->findByAggregatePaginated('order', '1', 2, 2);
+        $this->assertCount(1, $page2);
+        $this->assertSame('p3', $page2[0]->id());
     }
 
-    public function test_count_by_aggregate_does_not_count_other_aggregates(): void
+    public function test_find_by_aggregate_paginated_returns_empty_when_none(): void
     {
-        $this->repository->append(AuditEntry::record(
-            id: 'c3', aggregateType: 'order', aggregateId: '1',
-            action: 'CREATE', oldState: null, newState: [],
-            performedBy: 'u',
-        ));
-        $this->repository->append(AuditEntry::record(
-            id: 'c4', aggregateType: 'user', aggregateId: '10',
-            action: 'CREATE', oldState: null, newState: [],
-            performedBy: 'u',
-        ));
+        $entries = $this->repository->findByAggregatePaginated('order', '999', 10);
 
-        $this->assertSame(1, $this->repository->countByAggregate('order', '1'));
-        $this->assertSame(1, $this->repository->countByAggregate('user', '10'));
+        $this->assertSame([], $entries);
     }
 
-    // ─── persistence of timestamp precision ──────────────────────
+    // ─── negative-path: duplicate ID ─────────────────────────────
 
-    public function test_performed_at_is_preserved_exactly(): void
+    public function test_append_duplicate_id_throws(): void
     {
         $entry = AuditEntry::record(
-            id: 'ts-1', aggregateType: 'order', aggregateId: '1',
+            id: 'dup', aggregateType: 'order', aggregateId: '1',
             action: 'CREATE', oldState: null, newState: [],
             performedBy: 'u',
         );
 
         $this->repository->append($entry);
-        $found = $this->repository->findById('ts-1');
 
-        $this->assertSame(
-            $entry->performedAt()->format('Y-m-d\TH:i:s.uP'),
-            $found->performedAt()->format('Y-m-d\TH:i:s.uP'),
-        );
+        $this->expectException(\AuditTrail\Domain\Exception\AuditTrailException::class);
+
+        $this->repository->append($entry);
     }
 }

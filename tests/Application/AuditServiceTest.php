@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace AuditTrail\Tests\Application;
 
-use AuditTrail\Application\Exception\InvalidStateTransitionException;
+use AuditTrail\Application\DTO\ChangeRequest;
 use AuditTrail\Application\Service\AuditService;
 use AuditTrail\Domain\Action;
 use AuditTrail\Domain\AuditEntry;
 use AuditTrail\Domain\Exception\EntryNotFoundException;
+use AuditTrail\Domain\Exception\InvalidStateTransitionException;
 use AuditTrail\Port\AuditRepository;
+use AuditTrail\Port\IdGenerator;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 
@@ -17,13 +19,18 @@ final class AuditServiceTest extends TestCase
 {
     private AuditRepository $repository;
     private LoggerInterface $logger;
+    private IdGenerator $idGenerator;
     private AuditService $service;
 
     protected function setUp(): void
     {
         $this->repository = $this->createMock(AuditRepository::class);
         $this->logger = $this->createMock(LoggerInterface::class);
-        $this->service = new AuditService($this->repository, $this->logger);
+        $this->idGenerator = $this->createMock(IdGenerator::class);
+        $this->idGenerator->method('generate')->willReturnOnConsecutiveCalls(
+            'id-1', 'id-2', 'id-3', 'id-4', 'id-5',
+        );
+        $this->service = new AuditService($this->repository, $this->logger, $this->idGenerator);
     }
 
     // ─── recordChange: success paths ─────────────────────────────
@@ -285,6 +292,37 @@ final class AuditServiceTest extends TestCase
         $this->assertSame([], $result);
     }
 
+    // ─── getEntriesByAction ──────────────────────────────────────
+
+    public function test_get_entries_by_action_delegates_to_repository(): void
+    {
+        $action = Action::CREATE;
+        $expected = [AuditEntry::record(
+            id: 'x', aggregateType: 'order', aggregateId: '1',
+            action: 'CREATE', oldState: null, newState: [],
+            performedBy: 'u',
+        )];
+
+        $this->repository->method('findByAction')->with($action)->willReturn($expected);
+        $this->logger->expects($this->once())->method('info');
+
+        $result = $this->service->getEntriesByAction($action);
+
+        $this->assertSame($expected, $result);
+    }
+
+    // ─── countByAggregate ────────────────────────────────────────
+
+    public function test_count_by_aggregate_delegates_to_repository(): void
+    {
+        $this->repository->method('countByAggregate')->with('order', '1')->willReturn(5);
+        $this->logger->expects($this->once())->method('info');
+
+        $result = $this->service->countByAggregate('order', '1');
+
+        $this->assertSame(5, $result);
+    }
+
     // ─── recordBatch ─────────────────────────────────────────────
 
     public function test_record_batch_empty_returns_empty_array(): void
@@ -299,13 +337,13 @@ final class AuditServiceTest extends TestCase
 
     public function test_record_batch_success(): void
     {
-        $this->repository->expects($this->exactly(3))->method('append');
+        $this->repository->expects($this->once())->method('appendBatch');
         $this->logger->expects($this->once())->method('info');
 
         $result = $this->service->recordBatch([
-            ['order', '1', 'CREATE', null, ['status' => 'pending'], 'user-a'],
-            ['order', '1', 'UPDATE', ['status' => 'pending'], ['status' => 'shipped'], 'user-a'],
-            ['order', '1', 'DELETE', ['status' => 'shipped'], null, 'user-a'],
+            new ChangeRequest('order', '1', 'CREATE', null, ['status' => 'pending'], 'user-a'),
+            new ChangeRequest('order', '1', 'UPDATE', ['status' => 'pending'], ['status' => 'shipped'], 'user-a'),
+            new ChangeRequest('order', '1', 'DELETE', ['status' => 'shipped'], null, 'user-a'),
         ]);
 
         $this->assertCount(3, $result);
@@ -316,24 +354,24 @@ final class AuditServiceTest extends TestCase
 
     public function test_record_batch_all_or_nothing_on_validation_failure(): void
     {
-        $this->repository->expects($this->never())->method('append');
+        $this->repository->expects($this->never())->method('appendBatch');
         $this->logger->expects($this->never())->method('info');
 
         $this->expectException(InvalidStateTransitionException::class);
 
         $this->service->recordBatch([
-            ['order', '1', 'CREATE', null, ['status' => 'pending'], 'user-a'],
-            ['order', '1', 'UPDATE', null, null, 'user-a'],
-            ['order', '1', 'DELETE', ['status' => 'shipped'], null, 'user-a'],
+            new ChangeRequest('order', '1', 'CREATE', null, ['status' => 'pending'], 'user-a'),
+            new ChangeRequest('order', '1', 'UPDATE', null, null, 'user-a'),
+            new ChangeRequest('order', '1', 'DELETE', ['status' => 'shipped'], null, 'user-a'),
         ]);
     }
 
     public function test_record_batch_with_metadata(): void
     {
-        $this->repository->expects($this->once())->method('append');
+        $this->repository->expects($this->once())->method('appendBatch');
 
         $result = $this->service->recordBatch([
-            ['order', '1', 'CREATE', null, ['status' => 'pending'], 'user-a', ['ip' => '127.0.0.1']],
+            new ChangeRequest('order', '1', 'CREATE', null, ['status' => 'pending'], 'user-a', ['ip' => '127.0.0.1']),
         ]);
 
         $this->assertCount(1, $result);

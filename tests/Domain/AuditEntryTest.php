@@ -234,7 +234,6 @@ final class AuditEntryTest extends TestCase
         $this->assertSame(['status' => 'pending'], $entry->oldState());
         $this->assertSame(['status' => 'shipped'], $entry->newState());
         $this->assertSame('user-abc', $entry->performedBy());
-        $this->assertSame('user-abc', $entry->performedBy());
         $this->assertEquals(
             new \DateTimeImmutable('2026-06-06T12:00:00.000000+00:00'),
             $entry->performedAt(),

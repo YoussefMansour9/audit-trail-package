@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AuditTrail\Infrastructure\Persistence;
 
+use AuditTrail\Domain\Action;
 use AuditTrail\Domain\AuditEntry;
 use AuditTrail\Domain\Exception\AuditTrailException;
 use AuditTrail\Domain\Exception\EntryNotFoundException;
@@ -49,6 +50,34 @@ final class PDOAuditRepository implements AuditRepository
         }
     }
 
+    public function appendBatch(array $entries): void
+    {
+        if ($entries === []) {
+            return;
+        }
+
+        try {
+            $this->pdo->beginTransaction();
+
+            foreach ($entries as $entry) {
+                $this->append($entry);
+            }
+
+            $this->pdo->commit();
+        } catch (\PDOException $e) {
+            $this->pdo->rollBack();
+            throw new AuditTrailException(
+                sprintf('Failed to append audit batch: %s', $e->getMessage()),
+                previous: $e,
+            );
+        } catch (\Exception $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
     public function findById(string $id): AuditEntry
     {
         $sql = sprintf('SELECT * FROM %s WHERE id = :id', self::TABLE);
@@ -56,6 +85,7 @@ final class PDOAuditRepository implements AuditRepository
         try {
             $stmt = $this->pdo->prepare($sql);
             $stmt->execute([':id' => $id]);
+            /** @var array<string, mixed>|false $row */
             $row = $stmt->fetch(\PDO::FETCH_ASSOC);
         } catch (\PDOException $e) {
             throw new AuditTrailException(
@@ -82,6 +112,35 @@ final class PDOAuditRepository implements AuditRepository
             ':aggregate_type' => $aggregateType,
             ':aggregate_id' => $aggregateId,
         ]);
+    }
+
+    public function findByAggregatePaginated(
+        string $aggregateType,
+        string $aggregateId,
+        int $limit,
+        int $offset = 0,
+    ): array {
+        $sql = sprintf(
+            'SELECT * FROM %s WHERE aggregate_type = :aggregate_type AND aggregate_id = :aggregate_id ORDER BY performed_at ASC LIMIT :limit OFFSET :offset',
+            self::TABLE,
+        );
+
+        return $this->fetchAll($sql, [
+            ':aggregate_type' => $aggregateType,
+            ':aggregate_id' => $aggregateId,
+            ':limit' => $limit,
+            ':offset' => $offset,
+        ]);
+    }
+
+    public function findByAction(Action $action): array
+    {
+        $sql = sprintf(
+            'SELECT * FROM %s WHERE action = :action ORDER BY performed_at DESC',
+            self::TABLE,
+        );
+
+        return $this->fetchAll($sql, [':action' => $action->value]);
     }
 
     public function findByPerformedBy(string $userId): array
@@ -162,24 +221,37 @@ final class PDOAuditRepository implements AuditRepository
     private function hydrate(array $row): AuditEntry
     {
         return AuditEntry::fromArray([
-            'id' => $row['id'],
-            'aggregate_type' => $row['aggregate_type'],
-            'aggregate_id' => $row['aggregate_id'],
-            'action' => $row['action'],
-            'old_state' => $this->decodeJson($row['old_state']),
-            'new_state' => $this->decodeJson($row['new_state']),
-            'performed_by' => $row['performed_by'],
-            'performed_at' => $row['performed_at'],
-            'metadata' => $this->decodeJson($row['metadata']),
+            'id' => $this->ensureString($row['id']),
+            'aggregate_type' => $this->ensureString($row['aggregate_type']),
+            'aggregate_id' => $this->ensureString($row['aggregate_id']),
+            'action' => $this->ensureString($row['action']),
+            'old_state' => $this->decodeJson($row['old_state'] ?? null),
+            'new_state' => $this->decodeJson($row['new_state'] ?? null),
+            'performed_by' => $this->ensureString($row['performed_by']),
+            'performed_at' => $this->ensureString($row['performed_at']),
+            'metadata' => $this->decodeJson($row['metadata'] ?? null),
         ]);
     }
 
-    private function decodeJson(?string $value): mixed
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function decodeJson(mixed $value): array|null
     {
-        if ($value === null || $value === '') {
+        if (!is_string($value) || $value === '') {
             return null;
         }
 
-        return json_decode($value, true, 512, JSON_THROW_ON_ERROR);
+        /** @var array<string, mixed> $decoded */
+        $decoded = json_decode($value, true, 512, JSON_THROW_ON_ERROR);
+
+        return $decoded;
+    }
+
+    private function ensureString(mixed $value): string
+    {
+        assert(is_string($value));
+
+        return $value;
     }
 }

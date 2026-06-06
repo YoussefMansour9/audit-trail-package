@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace AuditTrail\Application\Service;
 
-use AuditTrail\Application\Exception\InvalidStateTransitionException;
+use AuditTrail\Application\DTO\ChangeRequest;
 use AuditTrail\Domain\Action;
 use AuditTrail\Domain\AuditEntry;
+use AuditTrail\Domain\Exception\InvalidStateTransitionException;
 use AuditTrail\Port\AuditRepository;
+use AuditTrail\Port\IdGenerator;
 use Psr\Log\LoggerInterface;
 
 final class AuditService
@@ -15,6 +17,7 @@ final class AuditService
     public function __construct(
         private readonly AuditRepository $repository,
         private readonly LoggerInterface $logger,
+        private readonly IdGenerator $idGenerator,
     ) {
     }
 
@@ -33,11 +36,7 @@ final class AuditService
         ?array $newState,
         string $performedBy,
         ?array $metadata = null,
-    ):
-
-    
-
-    AuditEntry {
+    ): AuditEntry {
         $this->validateTransition($action, $oldState, $newState);
 
         $entry = AuditEntry::record(
@@ -145,6 +144,21 @@ final class AuditService
     }
 
     /**
+     * @return list<AuditEntry>
+     */
+    public function getEntriesByAction(Action $action): array
+    {
+        $entries = $this->repository->findByAction($action);
+
+        $this->logger->info('Audit entries by action retrieved', [
+            'action' => $action->value,
+            'count' => count($entries),
+        ]);
+
+        return $entries;
+    }
+
+    /**
      * @param array<string, mixed>|null $oldState
      * @param array<string, mixed>|null $newState
      */
@@ -213,15 +227,7 @@ final class AuditService
      *
      * Validates every transition before persisting any.
      *
-     * @param list<array{
-     *     0: string,
-     *     1: string,
-     *     2: string,
-     *     3: array<string, mixed>|null,
-     *     4: array<string, mixed>|null,
-     *     5: string,
-     *     6?: array<string, mixed>|null,
-     * }> $changes Each tuple: aggregateType, aggregateId, action, oldState, newState, performedBy, optional metadata
+     * @param list<ChangeRequest> $changes
      *
      * @return list<AuditEntry>
      */
@@ -234,27 +240,22 @@ final class AuditService
 
         $entries = [];
 
-        foreach ($changes as $i => $change) {
-            [$aggregateType, $aggregateId, $action, $oldState, $newState, $performedBy] = $change;
-            $metadata = $change[6] ?? null;
-
-            $this->validateTransition($action, $oldState, $newState);
+        foreach ($changes as $change) {
+            $this->validateTransition($change->action, $change->oldState, $change->newState);
 
             $entries[] = AuditEntry::record(
                 id: $this->generateId(),
-                aggregateType: $aggregateType,
-                aggregateId: $aggregateId,
-                action: $action,
-                oldState: $oldState,
-                newState: $newState,
-                performedBy: $performedBy,
-                metadata: $metadata,
+                aggregateType: $change->aggregateType,
+                aggregateId: $change->aggregateId,
+                action: $change->action,
+                oldState: $change->oldState,
+                newState: $change->newState,
+                performedBy: $change->performedBy,
+                metadata: $change->metadata,
             );
         }
 
-        foreach ($entries as $entry) {
-            $this->repository->append($entry);
-        }
+        $this->repository->appendBatch($entries);
 
         $this->logger->info('Audit batch recorded', ['count' => count($entries)]);
 
@@ -263,13 +264,6 @@ final class AuditService
 
     private function generateId(): string
     {
-        return sprintf(
-            '%s-%s-%s-%s-%s',
-            bin2hex(random_bytes(4)),
-            bin2hex(random_bytes(2)),
-            bin2hex(random_bytes(2)),
-            bin2hex(random_bytes(2)),
-            bin2hex(random_bytes(6)),
-        );
+        return $this->idGenerator->generate();
     }
 }
