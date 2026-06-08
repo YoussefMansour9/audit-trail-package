@@ -261,9 +261,13 @@ final class PDOAuditRepositoryTest extends TestCase
             performedBy: 'u',
         );
 
-        $this->expectException(\AuditTrail\Domain\Exception\AuditTrailException::class);
-
-        $this->repository->appendBatch([$valid, $invalid]);
+        try {
+            $this->repository->appendBatch([$valid, $invalid]);
+            $this->fail('Expected AuditTrailException was not thrown');
+        } catch (\AuditTrail\Domain\Exception\AuditTrailException $e) {
+            $this->expectException(\AuditTrail\Domain\Exception\EntryNotFoundException::class);
+            $this->repository->findById('ok');
+        }
     }
 
     // ─── findByAggregatePaginated ────────────────────────────────

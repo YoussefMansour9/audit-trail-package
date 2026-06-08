@@ -64,12 +64,6 @@ final class PDOAuditRepository implements AuditRepository
             }
 
             $this->pdo->commit();
-        } catch (\PDOException $e) {
-            $this->pdo->rollBack();
-            throw new AuditTrailException(
-                sprintf('Failed to append audit batch: %s', $e->getMessage()),
-                previous: $e,
-            );
         } catch (\Exception $e) {
             if ($this->pdo->inTransaction()) {
                 $this->pdo->rollBack();

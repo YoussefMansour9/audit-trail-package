@@ -15,9 +15,9 @@ final class ChangeRequest
         public readonly string $aggregateType,
         public readonly string $aggregateId,
         public readonly string $action,
-        public readonly ?array $oldState = null,
-        public readonly ?array $newState = null,
-        public readonly string $performedBy = '',
+        public readonly ?array $oldState,
+        public readonly ?array $newState,
+        public readonly string $performedBy,
         public readonly ?array $metadata = null,
     ) {
     }
