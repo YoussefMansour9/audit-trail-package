@@ -2,7 +2,7 @@
 
 [![PHP](https://img.shields.io/badge/PHP-8.3+-6f4c8e?logo=php)](https://php.net)
 [![CI](https://github.com/YoussefMansour9/audit-trail-package/actions/workflows/ci.yml/badge.svg)](https://github.com/YoussefMansour9/audit-trail-package/actions/workflows/ci.yml)
-[![PHPStan](https://img.shields.io/badge/PHPStan-Level%206-brightgreen)](https://phpstan.org)
+[![PHPStan](https://img.shields.io/badge/PHPStan-Level%209-brightgreen)](https://phpstan.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A **production-grade** Composer package for tracking entity changes with complete audit history. Built with **Clean Architecture**, **CQRS**, **Repository Pattern**, and **Dependency Injection**.
@@ -150,10 +150,12 @@ $auditTrail->recordChange('order', '42', 'DELETE', $oldState, null, 'user-1');
 ### Batch recording (atomic)
 
 ```php
+use AuditTrail\Application\DTO\ChangeRequest;
+
 $auditTrail->recordBatch([
-    ['order', '1', 'CREATE', null,             ['status' => 'pending'], 'user-1'],
-    ['order', '1', 'UPDATE', ['status' => 'pending'], ['status' => 'shipped'], 'user-1'],
-    ['order', '1', 'DELETE', ['status' => 'shipped'], null,                    'user-1'],
+    new ChangeRequest('order', '1', 'CREATE', null,             ['status' => 'pending'],  'user-1'),
+    new ChangeRequest('order', '1', 'UPDATE', ['status' => 'pending'], ['status' => 'shipped'], 'user-1'),
+    new ChangeRequest('order', '1', 'DELETE', ['status' => 'shipped'], null,                     'user-1'),
 ]);
 ```
 
@@ -198,9 +200,12 @@ $logger->pushHandler(new StreamHandler('/var/log/audit.log', Logger::INFO));
 $auditTrail = AuditTrail::createWithPdo($pdo, $logger);
 
 // Or wire manually with any PSR-3 logger
+use AuditTrail\Infrastructure\RandomBytesIdGenerator;
+
 $service = new AuditService(
     new PDOAuditRepository($pdo),
     $logger,
+    new RandomBytesIdGenerator(),
 );
 $auditTrail = new AuditTrail($service);
 ```
@@ -252,7 +257,7 @@ The schema file is located at `src/Infrastructure/Persistence/Schema/mysql.sql`.
 vendor/bin/phpunit
 
 # Run static analysis
-vendor/bin/phpstan analyse src --level 6
+vendor/bin/phpstan analyse src --level 9
 
 # Code coverage (requires xdebug)
 vendor/bin/phpunit --coverage-html coverage/
@@ -265,21 +270,20 @@ Tests use **SQLite in-memory** — no database server required. The test suite r
 | Test suite | Tests | What it covers |
 |---|---|---|
 | `Domain\ActionTest` | 6 | Enum values, cases, from/tryFrom |
-| `Domain\AuditEntryTest` | 21 | Creation, serialization, reconstruction, validation |
+| `Domain\AuditEntryTest` | 20 | Creation, serialization, reconstruction, validation |
 | `Domain\Exception\ExceptionTest` | 5 | Exception hierarchy and messages |
-| `Port\AuditRepositoryTest` | 1 | Interface contract (mock) |
-| `Application\AuditServiceTest` | 15 | Use cases, validation rules, batch atomicity |
-| `Infrastructure\PDOAuditRepositoryTest` | 14 | Full CRUD with SQLite, ordering, JSON encoding |
-| `AuditTrailTest` | 7 | Public facade delegation |
+| `Application\AuditServiceTest` | 17 | Use cases, validation rules, batch atomicity |
+| `Infrastructure\PDOAuditRepositoryTest` | 17 | Full CRUD with SQLite, ordering, pagination, batch rollback |
+| `AuditTrailTest` | 8 | Public facade delegation, createWithPdo factory |
 
 ---
 
 ## PHPStan
 
-This project enforces **level 6** (property type hints, return type hints, generic array annotations):
+This project enforces **level 9** (the maximum — property type hints, return type hints, generic array annotations, mixed type warnings, and strict comparison rules):
 
 ```bash
-vendor/bin/phpstan analyse src --level 6
+vendor/bin/phpstan analyse src --level 9
 ```
 
 ---
